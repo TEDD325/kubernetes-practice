@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# IP 주소를 변수로 정의합니다.
+MASTER_IP="10.178.0.13"
+NODE1_IP="10.178.0.9"
+NODE2_IP="10.178.0.10"
+NODE3_IP="10.178.0.11"
+
 echo '======== [1] GCP 환경에서의 기본 설정 ========'
 echo '======== [1-1] 패키지 업데이트 ========'
 sudo apt-get update -y && sudo apt-get upgrade -y
@@ -10,12 +16,12 @@ sudo timedatectl set-timezone Asia/Seoul
 echo '======== [1-3] [WARNING FileExisting-tc]: tc not found in system path 로그 관련 업데이트 ========'
 sudo apt-get install -y iproute2
 
-# GCP 내부 IP로 설정
 echo '======= [1-4] hosts 설정 =========='
 cat << EOF | sudo tee -a /etc/hosts
-10.178.0.5 k8s-master
-10.178.0.6 k8s-node1
-10.178.0.7 k8s-node2
+$MASTER_IP k8s-master
+$NODE1_IP k8s-node1
+$NODE2_IP k8s-node2
+$NODE3_IP k8s-node3
 EOF
 
 echo '======== [2] kubeadm 설치 전 사전작업 ========'
@@ -23,7 +29,8 @@ echo '======== [2-1] 방화벽 해제 ========'
 sudo ufw disable || echo "GCP에서는 ufw가 비활성화되어 있습니다."
 
 echo '======== [2-2] Swap 비활성화 ========'
-sudo swapoff -a && sudo sed -i '/ swap / s/^/#/' /etc/fstab
+sudo swapoff -a
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
 
 echo '======== [3] 컨테이너 런타임 설치 ========'
 echo '======== [3-1] 컨테이너 런타임 설치 전 사전작업 ========'
@@ -74,15 +81,17 @@ sudo systemctl enable --now kubelet
 
 echo '======== [5] kubeadm으로 클러스터 생성  ========'
 echo '======== [5-1] 클러스터 초기화 (Pod Network 세팅) ========'
-sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=10.178.0.5 || echo "kubeadm 명령이 실패했습니다."
-sudo kubeadm token create --print-join-command | sudo tee /home/ubuntu/join.sh
+sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=$MASTER_IP || { echo "kubeadm 명령이 실패했습니다."; exit 1; }
 
 echo '======== [5-2] kubectl 사용 설정 ========'
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-echo '======== [5-3] Pod Network 설치 (flannel) ========'
+echo '======== [5-3] join.sh 파일 생성 ========'
+sudo kubeadm token create --print-join-command | sudo tee /home/ubuntu/join.sh
+
+echo '======== [5-4] Pod Network 설치 (flannel) ========'
 kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml || echo "Pod Network 설치 오류 발생"
 
 echo '======== [6] 쿠버네티스 편의기능 설치 ========'
@@ -101,8 +110,3 @@ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/late
 
 echo '======== [7] Pod 상태 확인 ========'
 kubectl get pods -A || echo "Pod 상태 확인 오류 발생"
-
-echo '======== [8] GCP 특이적 에러 해결 ========'
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
